@@ -176,6 +176,8 @@ extern "C" {
 #define ATTR_sample_starttime	"sample_starttime"
 #define ATTR_job_kill_delay	"job_kill_delay"
 #define ATTR_topjob_ineligible "topjob_ineligible"
+#define ATTR_krb_princ "krb_princ"
+#define ATTR_job_host "Job_Host"
 #define ATTR_history_timestamp	"history_timestamp"
 /* Added for finished jobs RFE */
 #define ATTR_stageout_status    "Stageout_status"
@@ -301,6 +303,9 @@ extern "C" {
 #define ATTR_python_restart_max_objects "python_restart_max_objects"
 #define ATTR_python_restart_min_interval "python_restart_min_interval"
 #define ATTR_power_provisioning "power_provisioning"
+#define ATTR_acl_krb_realm_enable "acl_krb_realm_enable"
+#define ATTR_acl_krb_realms "acl_krb_realms"
+#define ATTR_krb_realm_submit_acl "krb_realm_submit_acl"
 
 /* additional scheduler "attribute" names */
 

@@ -153,6 +153,9 @@ enum srv_atr {
 	SVR_ATR_jobscript_max_size,
 	SVR_ATR_restrict_res_to_release_on_suspend,
 	SRV_ATR_PowerProvisioning,
+        SRV_ATR_acl_krb_realm_enable,
+        SRV_ATR_acl_krb_realms,
+        SRV_ATR_krb_realm_submit_acl,
 	/* This must be last */
 	SRV_ATR_LAST
 };

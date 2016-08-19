@@ -151,6 +151,10 @@ static enum job_atr attrs_to_copy[] = {
 	JOB_ATR_reserve_ID,
 	JOB_ATR_project,
 	JOB_ATR_run_version,
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+	JOB_ATR_krb_princ,
+	JOB_ATR_job_host,
+#endif
 	JOB_ATR_LAST		/* This MUST be LAST	*/
 };
 

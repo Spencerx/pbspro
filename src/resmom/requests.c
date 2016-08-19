@@ -85,6 +85,8 @@
 #include "placementsets.h"
 #include "pbs_internal.h"
 
+#include "renew.h"
+
 /**
  * @file	requests.c
  */
@@ -505,8 +507,8 @@ frk_err(int err, struct batch_request *preq)
  */
 
 static pid_t
-fork_to_user(preq)
-struct batch_request *preq;
+fork_to_user(struct batch_request *preq, struct krb_holder    *ticket)
+
 {
 	struct group   *grpp;
 	pid_t		pid;
@@ -528,7 +530,7 @@ struct batch_request *preq;
 		return (pid);
 	} else if (pid < 0)
 		return (-PBSE_SYSTEM);
-
+        
 	/* The Child */
 
 	if (preq->rq_type == PBS_BATCH_CopyFiles_Cred ||
@@ -583,6 +585,14 @@ struct batch_request *preq;
 		}
 		(void)chdir(pwdp->pw_dir); /* change to user`s home directory */
 	}
+        
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+        // singleshot ticket, without renewal
+        if (pjob != NULL) 
+            init_ticket_from_job(pjob,NULL,ticket);
+        else
+            init_ticket_from_req(preq->rq_extend,preq->rq_ind.rq_cpyfile.rq_jobid,ticket);
+#endif
 
 	if (preq->rq_type == PBS_BATCH_CopyFiles_Cred ||
 		preq->rq_type == PBS_BATCH_DelFiles_Cred) {
@@ -3135,7 +3145,7 @@ req_cpyfile(struct batch_request *preq)
 	char                    dup_rqcpf_jobid[PBS_MAXSVRJOBID+1];
 	struct work_task *wtask = NULL;
 	DBPRT(("%s: entered\n", __func__))
-
+                
 	if (preq->rq_type == PBS_BATCH_CopyFiles_Cred)
 		rqcpf = &preq->rq_ind.rq_cpyfile_cred.rq_copyfile;
 	else
@@ -3208,8 +3218,13 @@ req_cpyfile(struct batch_request *preq)
 		}
 	}
 
+        struct krb_holder *ticket = NULL;
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+        ticket = alloc_ticket();
+#endif
+        
 	/* Become the user */
-	pid = fork_to_user(preq);
+	pid = fork_to_user(preq,ticket);
 	rc  = (int)pid;
 	if (pid > 0) {
 		if (pjob) {
@@ -3235,6 +3250,7 @@ req_cpyfile(struct batch_request *preq)
 				}
 			}
 		}
+                
 		return;		/* parent - continue with someother task */
 	} else if (rc < 0) {
 		req_reject(-rc, 0, preq);
@@ -3245,6 +3261,11 @@ req_cpyfile(struct batch_request *preq)
 	if (stage_inout.sandbox_private) {
 		chdir(pbs_jobdir);
 	}
+        
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+        setenv("KRB5CCNAME",get_ticket_ccname(ticket),1);
+	log_err(0,__func__,get_ticket_ccname(ticket));
+#endif
 
 	/*
 	 * Child process ...
@@ -3330,6 +3351,11 @@ req_cpyfile(struct batch_request *preq)
 	if (stage_inout.sandbox_private && stage_inout.stageout_failed) {
 		exit(STAGEOUT_FAILURE);
 	}
+        
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+        free_ticket(ticket);
+#endif
+        
 	exit(0);	/* remember, we are the child, exit not return */
 }
 
@@ -3415,7 +3441,13 @@ struct batch_request *preq;
 		if (preq->isrpp)
 			pjob->ji_preq = preq; /* keep the batch request pointer */
 	}
-	if ((pid = fork_to_user(preq)) > 0) {
+        
+        struct krb_holder *ticket = NULL;
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+        ticket = alloc_ticket();
+#endif
+        
+	if ((pid = fork_to_user(preq,ticket)) > 0) {
 		/* parent */
 		if (pjob) {
 			pjob->ji_momsubt = pid;
@@ -3429,6 +3461,10 @@ struct batch_request *preq;
 		return;
 	}
 
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+        setenv("KRB5CCNAME",get_ticket_ccname(ticket),1);
+#endif
+        
 	/* Child process ... delete the files */
 
 	rc = del_files(preq, &bad_list);
@@ -3446,6 +3482,10 @@ struct batch_request *preq;
 		if (!preq->isrpp)
 			reply_ack(preq);
 	}
+        
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+        free_ticket(ticket);
+#endif
 
 	exit(0);	/* remember, we are the child, exit not return */
 }

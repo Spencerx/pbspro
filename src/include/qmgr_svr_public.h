@@ -131,4 +131,7 @@ ATTR_jobscript_max_size,
 ATTR_python_restart_max_hooks,
 ATTR_python_restart_max_objects,
 ATTR_python_restart_min_interval,
+ATTR_acl_krb_realm_enable,
+ATTR_acl_krb_realms,
+ATTR_krb_realm_submit_acl,
 #endif	/* _QMGR_SVR_PUBLIC_H */

@@ -271,6 +271,8 @@ enum job_atr {
 	JOB_ATR_topjob_ineligible,
 	JOB_ATR_resc_released,
 	JOB_ATR_resc_released_list,
+	JOB_ATR_krb_princ,
+	JOB_ATR_job_host,
 #include "site_job_attr_enum.h"
 
 	JOB_ATR_UNKN,		/* the special "unknown" type		  */
@@ -1029,6 +1031,7 @@ task_find	(job		*pjob,
 #define JOB_EXEC_HOOK_DELETE   -19 /* a hook requested for job to be deleted */
 #define JOB_EXEC_RERUN_MS_FAIL -20 /* Mother superior connection failed */
 #define JOB_EXEC_FAIL_SECURITY -21 /* Security breach in PBS directory */
+#define JOB_EXEC_FAIL_KRB5     -22 /* Error when initializing kerberos credentials */
 
 
 /* Fake "random" number added onto the end of the staging */
@@ -1051,6 +1054,7 @@ extern char *lookup_variable(void *, int, char *);
 extern int   init_chkmom(job *);
 extern void  issue_track(job *);
 extern void  issue_delete(job *);
+extern char *get_job_principal(char *jobid);
 extern int   job_abt(job *, char *);
 extern job  *job_alloc(void);
 extern void  job_freecontext(job *pj);
