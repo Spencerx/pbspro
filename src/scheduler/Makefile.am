@@ -103,7 +103,8 @@ sbin_PROGRAMS = pbs_sched pbsfs
 common_cppflags = \
 	-I$(top_srcdir)/src/include \
 	@PYTHON_INCLUDES@ \
-	@libical_inc@
+	@libical_inc@ \
+	@KRB5_CFLAGS@
 
 common_libs = \
 	$(builddir)/libpbs_sched.a \
@@ -116,7 +117,8 @@ common_libs = \
 	@PYTHON_LDFLAGS@ \
 	@PYTHON_LIBS@ \
 	@libz_lib@ \
-	@libical_lib@
+	@libical_lib@ \
+	@KRB5_LIBS@
 
 pbs_sched_CPPFLAGS = ${common_cppflags}
 pbs_sched_LDADD = ${common_libs}

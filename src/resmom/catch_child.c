@@ -81,6 +81,8 @@
 #include "mom_hook_func.h"
 #include "placementsets.h"
 #include "hook.h"
+#include "renew.h"
+
 /**
  * @file	catch_child.c
  */
@@ -1604,6 +1606,11 @@ end_loop:
 				free(pobit);
 			}
 			ptask->ti_qs.ti_status = TI_STATE_DEAD;
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+			stop_renewal(ptask);
+#endif
+			
 			/*
 			 ** KLUDGE
 			 ** We need to save the value of the sid here just

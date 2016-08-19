@@ -292,7 +292,8 @@ struct batch_reply {
 #define PBS_BATCH_MomRestart	87
 #define PBS_BATCH_AuthExternal	88
 #define PBS_BATCH_HookPeriodic  89
-#define PBS_BATCH_RelnodesJob	90
+#define PBS_BATCH_RelnodesJob	110
+#define PBS_BATCH_GSSAuthenUser 90
 #define PBS_BATCH_ModifyResv	91
 #define PBS_BATCH_ResvOccurEnd	92
 #define PBS_BATCH_PreemptJobs	93

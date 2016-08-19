@@ -135,4 +135,7 @@ ATTR_show_hidden_attribs,
 ATTR_python_sync_mom_hookfiles_timeout,
 ATTR_rpp_max_pkt_check,
 ATTR_max_job_sequence_id,
+ATTR_acl_krb_realm_enable,
+ATTR_acl_krb_realms,
+ATTR_krb_realm_submit_acl,
 #endif	/* _QMGR_SVR_PUBLIC_H */
