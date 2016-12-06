@@ -376,7 +376,7 @@ start_pbs() {
 	    env LD_LIBRARY_PATH=$DB2DIR/lib64:$DB2DIR/lib ${PBS_EXEC}/sbin/pbs_mom
 	    echo "PBS Blue Gene mom"
         else
-	   if  ${PBS_EXEC}/sbin/pbs_mom
+	   if  ${PBS_EXEC}/sbin/pbs_mom -p
            then
 	      echo "PBS mom"
            else
