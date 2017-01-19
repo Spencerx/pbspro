@@ -117,6 +117,7 @@ enum queueattr {
 	QE_ATR_MaxGroupResSoft,
 	QE_ATR_NodeGroupKey,
 	QE_ATR_BackfillDepth,
+	QE_ATR_fairshare_tree,
 
 	/* The following attribute apply only to routing queues... */
 
