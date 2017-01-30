@@ -114,6 +114,9 @@ BuildRequires: tcl-devel
 BuildRequires: tk-devel
 BuildRequires: swig
 BuildRequires: zlib-devel
+BuildRequires: heimdal-devel
+BuildRequires: heimdal-libs
+BuildRequires: krb525
 %if %{defined suse_version}
 BuildRequires: libexpat-devel
 BuildRequires: libopenssl-devel
@@ -275,9 +278,11 @@ functionality of PBS Professional®.
 [ -d build ] && rm -rf build
 mkdir build
 cd build
+CFLAGS="-std=gnu99 -g -ggdb -D_GNU_SOURCE -D__STDC_FORMAT_MACROS -D__TOLDGROUP -D__STDC_FORMAT_MACROS" \
 ../configure \
 	PBS_VERSION=%{pbs_version} \
 	--prefix=%{pbs_prefix} \
+	--with-krbauth PATH_KRB5_CONFIG=/usr/lib/heimdal/bin/krb5-config \
 %if %{with ptl}
 	--enable-ptl \
 %endif
