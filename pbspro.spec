@@ -320,8 +320,15 @@ if [ $imps -eq 0 ]; then
 ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_postinstall server \
 	%{version} ${RPM_INSTALL_PREFIX:=%{pbs_prefix}} %{pbs_home} %{pbs_dbuser}
 fi
+if [ "$1" == "2" ]; then
+	service pbs restart
+fi
 
 %post %{pbs_execution}
+sed -i '/GuessMainPID=no/d' %{_unitdir}/pbs.service
+sed -i '/\[Service\]/a PIDFile=\/var\/spool\/pbs\/mom_priv\/mom.lock'  %{_unitdir}/pbs.service
+sed -i '/\[Service\]/a KillMode=process' %{_unitdir}/pbs.service
+sed -i 's/Restart=.*/Restart=always/g' %{_unitdir}/pbs.service
 ldconfig %{_libdir}
 # do not run pbs_postinstall when the CLE is greater than or equal to 6
 imps=0
@@ -334,6 +341,9 @@ fi
 if [ $imps -eq 0 ]; then
 ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_postinstall execution \
 	%{version} ${RPM_INSTALL_PREFIX:=%{pbs_prefix}} %{pbs_home}
+fi
+if [ "$1" == "2" ]; then
+	kill -USR1 $(cat /var/spool/pbs/mom_priv/mom.lock)
 fi
 
 %post %{pbs_client}
