@@ -90,6 +90,7 @@ extern pthread_once_t key_once;
 extern resdef **allres;
 extern resdef **consres;
 extern resdef **boolres;
+extern schd_resource *allstrres;
 
 extern char *sc_name;
 extern int sched_port;
