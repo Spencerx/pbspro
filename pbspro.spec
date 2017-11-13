@@ -433,6 +433,7 @@ ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_posttrans \
 %{_sysconfdir}/profile.d/pbs.csh
 %{_sysconfdir}/profile.d/pbs.sh
 %config(noreplace) %{_sysconfdir}/profile.d/*
+%config %{pbs_prefix}/lib/init.d/limits.pbs_mom
 %if %{defined have_systemd}
 %attr(644, root, root) %{_unitdir}/pbs.service
 %else
@@ -455,6 +456,7 @@ ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_posttrans \
 %{_sysconfdir}/profile.d/pbs.csh
 %{_sysconfdir}/profile.d/pbs.sh
 %config(noreplace) %{_sysconfdir}/profile.d/*
+%config %{pbs_prefix}/lib/init.d/limits.pbs_mom
 %if %{defined have_systemd}
 %attr(644, root, root) %{_unitdir}/pbs.service
 %else
