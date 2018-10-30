@@ -292,7 +292,9 @@ struct batch_reply {
 #define PBS_BATCH_MomRestart	87
 #define PBS_BATCH_AuthExternal	88
 #define PBS_BATCH_HookPeriodic  89
-#define PBS_BATCH_RelnodesJob	90
+#define PBS_BATCH_RelnodesJob	110
+#define PBS_BATCH_GSSAuthenUser 90
+#define PBS_BATCH_Cred          111
 #define PBS_BATCH_ModifyResv	91
 #define PBS_BATCH_ResvOccurEnd	92
 #define PBS_BATCH_PreemptJobs	93
@@ -400,9 +402,11 @@ extern int DIS_reply_read(int socket, struct batch_reply *preply, int rpp);
 extern void pbs_authors(void);
 extern int DIS_wflush(int sock, int rpp);
 
-extern int engage_external_authentication(int out, int auth_type, int fromsvr, char *ebuf, int ebufsz);
+extern int engage_external_authentication(int out, char *server_name, int auth_type, int fromsvr, char *ebuf, int ebufsz);
 extern char *PBSD_modify_resv(int connect, char *resv_id,
 	struct attropl *attrib, char *extend);
+
+extern int PBSD_cred(int c, char *princ, char *jobid, char *data, long validity, int rpp, char **msgid);
 #ifdef	__cplusplus
 }
 #endif

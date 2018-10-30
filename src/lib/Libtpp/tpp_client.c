@@ -4703,3 +4703,27 @@ tpp_clr_retry(tpp_packet_t *pkt, stream_t *strm)
 		}
 	}
 }
+
+/**
+ * @brief
+ *	Helper function to get a stream type
+ *
+ *
+ * @param[in] sd - The stream descriptor
+ *
+ * @return int 
+ * @retval Stream type (TPP_STRM_NORMAL or TPP_STRM_MCAST)
+ * @retval -1 on bad sd
+ *
+ */
+int tpp_get_strm_type(unsigned int sd) {
+	stream_t *strm;
+
+	strm = get_strm(sd);
+	if (!strm) {
+		TPP_DBPRT(("Bad sd %d", sd));
+		return -1;
+	}
+
+	return strm->strm_type;
+}

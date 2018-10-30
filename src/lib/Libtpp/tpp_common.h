@@ -688,4 +688,6 @@ void print_packet_hdr(const char *fnc, void *data, int len);
 
 #endif
 
+int tpp_get_strm_type(unsigned int sd) ;
+
 #endif

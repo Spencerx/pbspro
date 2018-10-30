@@ -79,6 +79,8 @@
 #include "dis.h"
 #include "dis_init.h"
 
+#include "pbsgss.h"
+
 #define DIS_BUF_SIZE 4096 /* default DIS buffer size */
 
 /* default keepalive values */
@@ -109,6 +111,14 @@ struct tppdisbuf {
 struct tppdis_chan {
 	struct tppdisbuf readbuf; /* the dis read buffer */
 	struct tppdisbuf writebuf; /* the dis write buffer */
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+	struct tppdisbuf gssrdbuf;   /* incoming wrapped data */
+	gss_buffer_desc  unwrapped;  /* release after copying to readbuf */
+	gss_ctx_id_t     gssctx; /* gss security context */
+	int              gssctx_established; /* (boolean) */
+	int              Confidential;        /* (boolean) */
+#endif
 };
 
 /* extern functions called from this file into the tpp_transport.c */
@@ -148,6 +158,477 @@ tppdis_pack_buff(struct tppdisbuf *tp)
 		tp->tdis_eod -= start;
 	}
 }
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+
+/**
+ * @brief
+ *	Resize existing buffer to the specific size
+ *
+ * @param[in] - tp - the tpp dis buffer pointer to resize
+ * @param[in] - newsize - new size of the buffer
+ *
+ */
+static int tppdis_buff_resize(struct tppdisbuf *tp, size_t newsize)
+{
+	char *newbuf = realloc(tp->tdis_thebuf, newsize);
+
+	if (newbuf != NULL)
+	{
+		tp->tdis_bufsize = newsize;
+		tp->tdis_thebuf = newbuf;
+		return 0;
+	} else {
+		return -1;
+	}
+}
+
+/**
+ * @brief
+ *	Fill tpp buffer with data provided by GSS buffer
+ *
+ *	Moves "uncommited" data to front of buffer and adjusts pointers.
+ *	Does a character by character move since data may over lap.
+ *
+ * @param[in] - to - the tpp dis buffer pointer to be filled in
+ * @param[in] - from - the source GSS buffer pointer
+ *
+ */
+static int tppdis_fillbuffer(struct tppdisbuf *to, gss_buffer_desc *from)
+{
+    size_t remaining_data = from->length;
+    OM_uint32 minor;
+
+    if (remaining_data == 0)
+        return 0;
+
+    tppdis_pack_buff(to);
+
+    ssize_t remaining_cap = to->tdis_bufsize - to->tdis_eod;
+    if ((size_t)remaining_cap < remaining_data) // remove first f bytes from unwrapped values
+      {
+      tppdis_buff_resize(to, remaining_data - remaining_cap + to->tdis_bufsize);
+      remaining_cap = remaining_data;
+      }
+    memcpy(&to->tdis_thebuf[to->tdis_eod], from->value, remaining_data);
+    to->tdis_eod += remaining_data;
+    gss_release_buffer(&minor, from);
+    return remaining_data;	/* for simplicity */
+}
+
+/**
+ * @brief
+ *	To do the actual reading of data into the buffer.
+ *
+ * @param[in] - fd - The tpp channel from which to do DIS reads
+ * @param[in] - tp - the tpp dis buffer pointer to be filled in
+ *
+ * @return	 number of chars read
+ * @retval	>0 number of characters read
+ * @retval	 0 if EOD (no data currently available)
+ * @retval	-1 if error
+ * @retval	-2 if EOF (stream closed)
+ *
+ * @par Side Effects:
+ *	None
+ *
+ * @par MT-safe: No
+ *
+ */
+static int tppdis_read_buff(int fd, struct tppdisbuf *tp) {
+	int i;
+	char *tmcp;
+	int len;
+
+	/* compact (move to the front) the uncommitted data */
+	tppdis_pack_buff(tp);
+
+	len = tp->tdis_bufsize - tp->tdis_eod;
+
+	if (len < DIS_BUF_SIZE) {
+		tp->tdis_bufsize += DIS_BUF_SIZE;
+		tmcp = (char *) realloc(tp->tdis_thebuf, sizeof(char) * tp->tdis_bufsize);
+		if (tmcp == NULL) {
+			/* realloc failed */
+			return -1;
+		}
+		tp->tdis_thebuf = tmcp;
+		len = tp->tdis_bufsize - tp->tdis_eod;
+	}
+
+	i = tpp_recv(fd, &tp->tdis_thebuf[tp->tdis_eod], len);
+	if (i > 0)
+		tp->tdis_eod += i;
+
+	return ((i == 0) ? -2 : i);
+}
+
+/**
+ * @brief
+ *	Read data from tpp stream to "fill" the buffer
+ *	Update the various buffer pointers. If the GSS context has been
+ *	associated with the tpp channel then do the unwrap of data.
+ *
+ * @param[in] - fd - The tpp channel from which to do DIS reads
+ *
+ * @return	 number of chars read
+ * @retval	>0 number of characters read
+ * @retval	 0 if EOD (no data currently available)
+ * @retval	-1 if error
+ * @retval	-2 if EOF (stream closed)
+ *
+ * @par Side Effects:
+ *	None
+ *
+ * @par MT-safe: No
+ *
+ */
+static int tppdis_read(int fd) {
+	struct tppdisbuf *tp;
+	struct tppdis_chan *chan;
+	int read;
+	gss_buffer_desc        *dec;
+	struct	tppdisbuf	*enc;
+	char wrapped = '\0'; /* attribute on the beginning of a message */
+	int i;
+
+	gss_ctx_id_t sec_ctx = GSS_C_NO_CONTEXT;
+
+	chan = (struct tppdis_chan *) tppdis_get_user_data(fd);
+	if (chan == NULL)
+		return -2;
+
+	if (chan->gssctx_established)
+		sec_ctx = chan->gssctx;
+
+	tp = &(chan->readbuf);
+	if (!tp)
+		return -1;
+
+	/* read the 'wrapped' attribute first */
+	read = tpp_recv(fd, &wrapped, sizeof(wrapped));
+	if (read <= 0) // EOF or read error
+		return read;
+
+	/* unsecured data - let's read the rest */
+	if (wrapped == '\0') {
+		while ((read = tppdis_read_buff(fd, tp)) == DIS_BUF_SIZE);
+		return read;
+	}
+
+	/* wrapped data awaiting, we should have the context
+	 * it is a problem without the context */
+	if (sec_ctx == GSS_C_NO_CONTEXT)
+	    return -1;
+
+	/* only one possibility remains - 'wrapped' must be '\1',
+	 * error otherwise */
+	if (wrapped != '\1')
+	    return -1;
+
+	dec = &chan->unwrapped;
+
+	// we do not have decoded data, we need to read new data into coded buffer
+	enc = &chan->gssrdbuf;
+
+	read = 1;
+	while (enc->tdis_eod - enc->tdis_lead < 4 && read > 0)
+		read = tppdis_read_buff(fd, enc);
+
+	if (read <= 0) // EOF or read error
+		return read;
+
+	if (enc->tdis_eod - enc->tdis_lead >= 4) {
+
+		// decode the header with packet size
+		int l = 0;
+		for (i=0; i<4; i++)
+		{
+	                l = l<<8 | (enc->tdis_thebuf[enc->tdis_lead] & 0xff);
+			enc->tdis_lead++;
+		}
+
+		/*
+		 * if the buffer is to small to have read the entire gss token,
+		 * make the buffer bigger and call read again to read the rest from the
+		 * socket. Then proceed.
+		 */
+		if (l+4 > enc->tdis_bufsize)
+			tppdis_buff_resize(enc, l+4);
+
+		// try to read the encrypted message (on error, fail)
+
+		while (enc->tdis_eod - enc->tdis_lead < l) {
+			if ((read = tppdis_read_buff(fd, enc)) < 0)
+				return read;
+                }
+
+		if (enc->tdis_eod - enc->tdis_lead >= l) {
+
+			OM_uint32 major, minor;
+			gss_buffer_desc msg_in;
+
+			msg_in.length = l;
+			msg_in.value = &enc->tdis_thebuf[enc->tdis_lead];
+
+			major = gss_unwrap(&minor, sec_ctx, &msg_in, dec, NULL, NULL);
+
+			enc->tdis_lead += l;
+			enc->tdis_trail = enc->tdis_lead;	/* commit */
+
+			if (major != GSS_S_COMPLETE) {
+				gss_release_buffer(&minor, dec);
+				return(-1);
+			}
+
+			if (dec->length == 0)
+				return -2;
+
+			if ((read = tppdis_fillbuffer(tp, dec)) > 0)
+				return read;
+
+			return -2;
+		}
+	}
+	// we were not able to read enough data to read the message header
+	return -2; // EOF
+}
+
+/**
+ * @brief
+ *	Check whether the GSS context has been already established on tpp channel.
+ *
+ * @param[in] - fd - The tpp channel
+ *
+ * @return	boolean
+ * @retval	True if context has been established
+ * @retval	False if not
+ *
+ * @par Side Effects:
+ *	None
+ *
+ * @par MT-safe: No
+ *
+ */
+int DIS_tpp_has_ctx(int fd) {
+	struct tppdis_chan *chan;
+
+	chan = (struct tppdis_chan *) tppdis_get_user_data(fd);
+	if (chan == NULL)
+		return 0;
+
+	return chan->gssctx_established;
+}
+
+/**
+ * @brief
+ *	Return GSS context binded with tpp channel (even not fully established).
+ *
+ * @param[in] - fd - The tpp channel
+ *
+ * @return	gss_ctx_id_t
+ * @retval	The GSS context (even not fully established)
+ * @retval	GSS_C_NO_CONTEXT if no context exists
+ *
+ * @par Side Effects:
+ *	None
+ *
+ * @par MT-safe: No
+ *
+ */
+gss_ctx_id_t DIS_tpp_get_ctx(int fd) {
+	struct tppdis_chan *chan;
+
+	chan = (struct tppdis_chan *) tppdis_get_user_data(fd);
+	if (chan == NULL)
+		return GSS_C_NO_CONTEXT;
+
+	return chan->gssctx;
+}
+
+/**
+ * @brief
+ *	Associate the GSS context with the tpp channel and set the Confidential flag.
+ *	This is also used for saving the GSS context during establishing GSS
+ *	context. 
+ *
+ * @param[in] - fd - The tpp channel
+ * @param[in] - ctx - The GSS context (even partial context)
+ * @param[in] - flags - 
+ * @param[in] - ctx_established - set to True for fully established GSS context
+ *
+ * @return	int
+ * @retval	PBSGSS_OK if OK
+ * @retval	!= PBSGSS_OK if not OK
+ *
+ * @par Side Effects:
+ *	None
+ *
+ * @par MT-safe: No
+ *
+ */
+int DIS_tpp_set_gss(int fd, gss_ctx_id_t ctx, OM_uint32 flags, int ctx_established)
+{
+	struct tppdis_chan *chan;
+
+	chan = (struct tppdis_chan *) tppdis_get_user_data(fd);
+	if (chan == NULL)
+		return -1;
+
+	chan->gssctx = ctx;
+
+	chan->gssctx_established = ctx_established;
+
+	if (!chan->gssctx_established)
+		return PBSGSS_OK;
+
+	chan->Confidential = (flags & GSS_C_CONF_FLAG);
+	struct tppdisbuf *tp = &chan->gssrdbuf;
+
+	OM_uint32 major, minor, bufsize;
+	major = gss_wrap_size_limit(&minor, ctx, (flags & GSS_C_CONF_FLAG), GSS_C_QOP_DEFAULT, DIS_BUF_SIZE, &bufsize);
+
+	/* reallocate the gss buffer if it's too small to handle the wrapped
+	 * version of the largest unwrapped message
+	 */
+	if (major == GSS_S_COMPLETE)
+	{
+		if (tp->tdis_bufsize < bufsize)
+			tppdis_buff_resize(tp, bufsize);
+
+		return PBSGSS_OK;
+	} else {
+		return PBSGSS_ERR_WRAPSIZE;
+	}
+}
+
+/**
+ * @brief
+ *	flush tpp/dis write buffer
+ *
+ *	Writes "committed" data in buffer to file descriptor,
+ *	packs remaining data (if any), resets pointers. If the GSS context has
+ *	has been associated with the tpp channel then do the gss wrap before
+ *	sending data.
+ *
+ * @param[in] - fd - The tpp channel whose DIS buffers need to be flushed
+ *
+ * @return Error code
+ * @retval  0 on success
+ * @retval -1 on error
+ *
+ * @par Side Effects:
+ *	None
+ *
+ * @par MT-safe: No
+ *
+ */
+int DIS_tpp_wflush(int fd) {
+	size_t ct;
+	char wrapped = '\0'; /* attribute on the beginning of a message */
+	char *pb;
+	struct tppdisbuf *tp;
+	struct tppdis_chan *chan;
+	gss_ctx_id_t context = GSS_C_NO_CONTEXT;
+	int i;
+
+	chan = (struct tppdis_chan *) tppdis_get_user_data(fd);
+	if (chan == NULL)
+		return -1;
+
+	/* mcast can not be wrapped (only TPP_STRM_NORMAL)
+	 * and we can not wrap without context */
+	if ((tpp_get_strm_type(fd) == TPP_STRM_NORMAL) && chan->gssctx_established) {
+		context = chan->gssctx;
+		wrapped = '\1';
+	} /* else unwrapped */
+
+	tp = &(chan->writebuf);
+	if (!tp)
+		return -1;
+
+	pb = tp->tdis_thebuf; /* data for sending */
+	ct = tp->tdis_trail; /* length of the data */
+	if (ct == 0)
+		return 0;
+
+	OM_uint32 major, minor = 0;
+	gss_buffer_desc msg_in, msg_out;
+
+        // encode the message and send it out
+        msg_out.value = NULL;
+        msg_out.length = 0;
+	if (context != GSS_C_NO_CONTEXT) {
+		int confidential_flag = chan->Confidential;
+		int conf_state = 0;
+
+		msg_in.value  = pb;
+		msg_in.length = ct;
+		major = gss_wrap(&minor, context, confidential_flag, GSS_C_QOP_DEFAULT, &msg_in, &conf_state, &msg_out);
+		if (major != GSS_S_COMPLETE) {
+			gss_release_buffer(&minor, &msg_out);
+			return(-1);
+		}
+
+		if (confidential_flag && !conf_state) {
+			gss_release_buffer(&minor, &msg_out);
+			return(-1);
+		}
+
+		// encode header with the coded message size
+		unsigned char nct[4];
+		ct = msg_out.length;
+		for (i = sizeof(nct); i > 0; ct>>=8)
+			nct[--i] = ct & 0xff;
+
+		/* we need to allocate memory for data for sending and
+		 * add the wrapped attribute along with the header with length
+		 * in front of the data */
+		pb = (char *)malloc(sizeof(wrapped) + sizeof(nct) + msg_out.length);
+		if (pb == NULL) {
+			gss_release_buffer(&minor, &msg_out);
+			return (-1);
+		}
+
+		memcpy(pb, &wrapped, sizeof(wrapped));
+		memcpy(pb + sizeof(wrapped), &nct, sizeof(nct));
+		memcpy(pb + sizeof(wrapped) + sizeof(nct), msg_out.value, msg_out.length);
+
+		ct = sizeof(wrapped) + sizeof(nct) + msg_out.length;
+	} else {
+		/* we need to allocate memory for data for sending and
+		 * add the wrapped attribute in front of the data */
+		pb = (char *)malloc(sizeof(wrapped) + ct);
+		if (pb == NULL) {
+			gss_release_buffer(&minor, &msg_out);
+			return (-1);
+		}
+
+		memcpy(pb, &wrapped, sizeof(wrapped));
+		memcpy(pb + sizeof(wrapped), tp->tdis_thebuf, ct);
+
+		ct += sizeof(wrapped);
+	}
+
+	/* actually send the data */
+	if (tpp_send(fd, pb, ct) == -1) {
+		gss_release_buffer(&minor, &msg_out);
+
+		free(pb);
+
+		return (-1);
+	}
+
+	tp->tdis_eod = tp->tdis_lead;
+	tppdis_pack_buff(tp);
+	gss_release_buffer(&minor, &msg_out);
+
+	free(pb);
+
+	return 0;
+}
+
+#else
 
 /**
  * @brief
@@ -256,6 +737,8 @@ DIS_tpp_wflush(int fd)
 	tppdis_pack_buff(tp);
 	return 0;
 }
+
+#endif
 
 /**
  * @brief
@@ -561,6 +1044,9 @@ tpp_eom(int fd)
 	if (tpp != NULL) {
 		/* initialize read and write buffers */
 		DIS_tpp_clear(&tpp->readbuf);
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		DIS_tpp_clear(&tpp->gssrdbuf);
+#endif
 	}
 	return 0;
 }
@@ -666,11 +1152,30 @@ DIS_tpp_setup(int fd)
 		rc = tpp_set_user_data(fd, tpp);
 		assert(rc == 0);
 		tpp_set_user_data_del_fnc(fd, DIS_tpp_destroy);
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		tpp->gssrdbuf.tdis_thebuf = malloc(DIS_BUF_SIZE);
+		assert(tpp->gssrdbuf.tdis_thebuf != NULL);
+		tpp->gssrdbuf.tdis_bufsize = DIS_BUF_SIZE;
+
+		tpp->gssctx = GSS_C_NO_CONTEXT;
+		tpp->gssctx_established = 0;
+		tpp->unwrapped.value = NULL;
+		tpp->unwrapped.length = 0;
+#endif
 	}
 
 	/* initialize read and write buffers */
 	DIS_tpp_clear(&tpp->readbuf);
 	DIS_tpp_clear(&tpp->writebuf);
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+	DIS_tpp_clear(&tpp->gssrdbuf);
+
+	OM_uint32 minor;
+	if (tpp->unwrapped.value)
+		gss_release_buffer (&minor, &tpp->unwrapped);
+#endif
 }
 
 /**
@@ -709,6 +1214,23 @@ DIS_tpp_destroy(int fd)
 		}
 		DIS_tpp_clear(&tpp->readbuf);
 		DIS_tpp_clear(&tpp->writebuf);
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		if (tpp->gssrdbuf.tdis_thebuf) {
+			free(tpp->gssrdbuf.tdis_thebuf);
+			tpp->gssrdbuf.tdis_thebuf = NULL;
+		}
+		DIS_tpp_clear(&tpp->gssrdbuf);
+		OM_uint32 minor;
+		if (tpp->gssctx != GSS_C_NO_CONTEXT) {
+			(void)gss_delete_sec_context (&minor, &tpp->gssctx, GSS_C_NO_BUFFER);
+			tpp->gssctx = GSS_C_NO_CONTEXT;
+		}
+		tpp->gssctx_established = 0;
+		if (tpp->unwrapped.value)
+			gss_release_buffer (&minor, &tpp->unwrapped);
+#endif
+
 		free(tpp);
 		tpp_set_user_data(fd, NULL);
 	}

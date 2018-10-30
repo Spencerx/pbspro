@@ -94,6 +94,7 @@
 #include	"pbs_internal.h"
 #include	"placementsets.h"
 #include	"pbs_reliable.h"
+#include	"renew.h"
 
 
 /* Global Data Items */
@@ -118,6 +119,9 @@ extern  char   *msg_err_malloc;
 extern int
 write_pipe_data(int upfds, void *data, int data_size);
 char	task_fmt[] = "/%8.8X";
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+extern void gss_establish_context(int stream, char *target_host, char* data, int len, int is_server);
+#endif
 
 
 /* Function pointers
@@ -300,8 +304,12 @@ event_dup(eventent *ep, job *pjob, hnodent *pnode)
 
 	append_link(&pnode->hn_events, &nep->ee_next, nep);
 
-	if (pnode->hn_stream == -1)
+	if (pnode->hn_stream == -1) {
 		pnode->hn_stream = rpp_open(pnode->hn_host, pnode->hn_port);
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		gss_establish_context(pnode->hn_stream, pnode->hn_host, NULL, 0, 0);
+#endif
+	}
 
 	return nep;
 }
@@ -382,8 +390,12 @@ check:
 
 	append_link(&pnode->hn_events, &ep->ee_next, ep);
 
-	if (pnode->hn_stream == -1)
+	if (pnode->hn_stream == -1) {
 		pnode->hn_stream = rpp_open(pnode->hn_host, pnode->hn_port);
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		gss_establish_context(pnode->hn_stream, pnode->hn_host, NULL, 0, 0);
+#endif
+	}
 
 	return ep;
 }
@@ -1653,7 +1665,8 @@ send_sisters_inner(job *pjob, int com, pbs_jobndstm_t command_func,
 	tm_event_t	event;
 	char		*cookie;
 
-	if (pbs_conf.pbs_use_mcast == 1)
+	/* never send credentials via mcast because mcast can not be wrapped by gss */
+	if (pbs_conf.pbs_use_mcast == 1 && com != IM_CRED)
 		return send_sisters_mcast_inner(pjob, com, command_func,
 						exclude_exec_host);
 
@@ -2228,6 +2241,7 @@ node_bailout(job *pjob, hnodent *np)
 			case	IM_OBIT_TASK:
 			case	IM_GET_INFO:
 			case	IM_GET_RESC:
+			case	IM_CRED:
 				/*
 				 ** A user attempt failed, inform process.
 				 */
@@ -3388,6 +3402,29 @@ im_request(int stream, int version)
 			}
 #endif
 
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+#if defined(KRB525_FALLBACK)
+			if (pjob->ji_wattr[(int)JOB_ATR_krb_princ].at_flags & ATR_VFLAG_SET) {
+				/* duplicitni cred_by_job kvuli krb525_fallback
+				 * v tomto miste jeste superior mama neposlala credentials!
+				 * ale fallbackem je vytvorime uz nyni
+				 * (jinak by tato vedlejsi mama pri krb525_fallbacku nevyrobila inicialni credentials),
+				 * kdyz superior mama posle credentials, prepise tyto novejsima,
+				 * nasledujici radek cred_by_job tedy take zrusit pri ruseni krb525_fallback
+				 * pokud radek zustane po odebrani prav uzlum,
+				 * bude se vypisovat zbytecna (neskodna) chybova hlaska */
+				cred_by_job(pjob, CRED_RENEWAL); /* krb525_fallback */
+				/* set krb525_fallback renew task */
+				if (!set_task(WORK_Timed, time_now + KRB525_FALLBACK_TIME,
+					krb525_fallback_renewal,
+					(void *)strdup(pjob->ji_qs.ji_jobid))) {
+					log_record(PBSEVENT_ERROR, PBS_EVENTCLASS_JOB, LOG_ERR,
+						pjob->ji_qs.ji_jobid, "unable to set krb525_fallback task");
+				}
+			}
+#endif
+#endif
+
 			/* create staging and execution dir if sandbox=PRIVATE mode is enabled */
 			/* this code should appear after check_pwd() since */
 			/* mkjobdir() dependes on job uid and gid being set correctly */
@@ -3585,6 +3622,18 @@ join_err:
 		delete_link(&ep->ee_next);
 		free(ep);
 	}
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+	/* check which command can be sent in cleartext */
+	switch (command) {
+		default:
+			if (!DIS_tpp_has_ctx(stream)) {
+				sprintf(log_buffer, "command %d sent in cleartext", command);
+				goto err;
+			}
+			break;
+	}
+#endif
 
 	switch (command) {
 
@@ -4951,6 +5000,14 @@ join_err:
 					break;
 			}
 			break;
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		case	IM_CRED:
+			ret = im_cred_read(pjob, np, stream);
+			if (ret != DIS_SUCCESS)
+				goto err;
+			break;
+#endif
 
 		case	IM_ERROR:		/* this is a REPLY */
 		case	IM_ERROR2:		/* this is a REPLY */

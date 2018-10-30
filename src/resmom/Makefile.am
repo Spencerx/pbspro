@@ -45,7 +45,9 @@ pbs_mom_CPPFLAGS = \
 	@hwloc_flags@ \
 	@hwloc_inc@ \
 	@libz_inc@ \
-	@PYTHON_INCLUDES@
+	@PYTHON_INCLUDES@ \
+	@KRB5_CFLAGS@ \
+	@KRB525_CFLAGS@
 
 pbs_mom_LDADD = \
 	$(top_builddir)/src/lib/Libattr/libattr.a \
@@ -62,7 +64,9 @@ pbs_mom_LDADD = \
 	@mom_mach_libs@ \
 	@libz_lib@ \
 	-lssl \
-	-lcrypto
+	-lcrypto \
+	@KRB5_LIBS@ \
+	@KRB525_LIBS@
 
 pbs_mom_SOURCES = \
 	$(top_builddir)/src/lib/Libattr/job_attr_def.c \
@@ -78,6 +82,9 @@ pbs_mom_SOURCES = \
 	$(top_srcdir)/src/server/resc_attr.c \
 	$(top_srcdir)/src/server/vnparse.c \
 	$(top_srcdir)/src/server/setup_resc.c \
+	$(top_srcdir)/src/server/krb5_util.c \
+	$(top_srcdir)/src/server/handshake.c \
+	$(top_srcdir)/src/server/gss_handshake.c \
 	${PBS_MACH}/mom_mach.c \
 	${PBS_MACH}/mom_mach.h \
 	${PBS_MACH}/mom_start.c \
@@ -96,7 +103,9 @@ pbs_mom_SOURCES = \
 	rm_dep.h \
 	stage_func.c \
 	start_exec.c \
-	vnode_storage.c
+	vnode_storage.c \
+	renew.c \
+	renew.h
 
 if ALPS_ENABLED
 pbs_mom_CPPFLAGS += -DMOM_ALPS=1 @expat_inc@

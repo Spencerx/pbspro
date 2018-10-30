@@ -110,6 +110,8 @@
 #include "svrfunc.h"
 #include "pbs_sched.h"
 
+#include "pbsgss.h"
+
 /* global data items */
 
 pbs_list_head svr_requests;
@@ -133,6 +135,10 @@ static void freebr_manage(struct rq_manage *);
 static void freebr_cpyfile(struct rq_cpyfile *);
 static void freebr_cpyfile_cred(struct rq_cpyfile_cred *);
 static void close_quejob(int sfds);
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+int req_gssauthenuser (struct batch_request *preq);
+#endif
 
 /**
  * @brief
@@ -231,6 +237,27 @@ authenticate_external(conn_t *conn, struct batch_request *request)
 				conn->cn_authen |= PBS_NET_CONN_FROM_PRIVIL; /* set priv connection */
 
 			return rc;
+#ifndef PBS_MOM
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		case AUTH_GSS:
+			if (pbs_conf.auth_method != AUTH_GSS) {
+				rc = -1;
+				snprintf(log_buffer, sizeof(log_buffer), "PBS Server not enabled for GSS Authentication");
+				goto err;
+			}
+
+			rc = req_gssauthenuser(request);
+
+			if (rc != 0) {
+				snprintf(log_buffer, sizeof(log_buffer), "GSS Authentication failed.");
+				goto err;
+			}
+
+			log_event(PBSEVENT_DEBUG | PBSEVENT_FORCE, PBS_EVENTCLASS_SERVER, LOG_INFO, __func__,"GSS Authentication succeeded.");
+			return rc;
+#endif
+#endif
+
 #endif
 		default:
 			snprintf(log_buffer, sizeof(log_buffer), "Authentication method not supported");
@@ -341,6 +368,29 @@ process_request(int sfds)
 	}
 
 #ifndef PBS_MOM
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+	strcpy(conn->cn_physhost, request->rq_host);
+#endif
+
+/* the PBS_BATCH_GSSAuthenUser part must be removed before raising PR */
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+        if (request->rq_type == PBS_BATCH_GSSAuthenUser) {
+                log_event(PBSEVENT_DEBUG | PBSEVENT_FORCE, PBS_EVENTCLASS_SERVER, LOG_ERR, __func__,"Received GSSAuthenUser.");
+
+                if (req_gssauthenuser(request) < 0) {
+                        log_event(PBSEVENT_DEBUG | PBSEVENT_FORCE, PBS_EVENTCLASS_SERVER, LOG_ERR, __func__,"Authentication failed.");
+                        req_reject(PBSE_BADCRED, 0, request);
+                        return;
+                }
+
+                log_event(PBSEVENT_DEBUG | PBSEVENT_FORCE, PBS_EVENTCLASS_SERVER, LOG_ERR, __func__,"Authentication succeeded.");
+		free_br(request);
+		return;
+        }
+#endif
+#endif
+
+#ifndef PBS_MOM
 	/* If the request is coming on the socket we opened to the  */
 	/* scheduler,  change the "user" from "root" to "Scheduler" */
 	if (find_sched_from_sock(request->rq_conn) != NULL) {
@@ -367,6 +417,28 @@ process_request(int sfds)
 	}
 
 #ifndef PBS_MOM
+	int access_by_krb = 0;
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+	if ((conn->cn_authen & PBS_NET_CONN_GSSAPIAUTH) != 0) {
+		strcpy(request->rq_user, conn->cn_username);
+		strcpy(request->rq_host, conn->cn_hostname);
+
+		if (server.sv_attr[(int)SRV_ATR_acl_krb_realm_enable].at_val.at_long) {
+
+			if (acl_check(&server.sv_attr[(int)SRV_ATR_acl_krb_realms], conn->cn_principal,ACL_Host) == 0) {
+				req_reject(PBSE_BADHOST, 0, request);
+				close_client(sfds);
+				return;
+			}
+		}
+
+		// this principal is allowed to access the server
+		access_by_krb = 1;
+	}
+#endif
+
+	if (access_by_krb == 0)
 	if (server.sv_attr[(int)SRV_ATR_acl_host_enable].at_val.at_long) {
 		/* acl enabled, check it; always allow myself	*/
 
@@ -965,7 +1037,24 @@ dispatch_request(int sfds, struct batch_request *request)
 				"delete hook-related file request received");
 			req_del_hookfile(request);
 			break;
-
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		case PBS_BATCH_Cred:
+			if (!DIS_tpp_has_ctx(request->rq_conn)) {
+				log_event(PBSEVENT_ERROR, PBS_EVENTCLASS_JOB,
+					LOG_ALERT,
+					request->rq_ind.rq_cred.rq_jobid,
+				"credentials received in cleartext, rejecting");
+				req_reject(PBSE_BADCRED, 0, request);
+				close_client(sfds);
+				break;
+			}
+			log_event(PBSEVENT_DEBUG, PBS_EVENTCLASS_JOB,
+				LOG_INFO,
+				request->rq_ind.rq_cred.rq_jobid,
+				"credentials received");
+			req_cred(request);
+			break;
+#endif
 #endif
 		default:
 			req_reject(PBSE_UNKREQ, 0, request);
@@ -1356,6 +1445,10 @@ free_br(struct batch_request *preq)
 		case PBS_BATCH_MvJobFile:
 			if (preq->rq_ind.rq_jobfile.rq_data)
 				free(preq->rq_ind.rq_jobfile.rq_data);
+			break;
+		case PBS_BATCH_Cred:
+			if (preq->rq_ind.rq_cred.rq_data)
+				free(preq->rq_ind.rq_cred.rq_data);
 			break;
 
 #ifndef PBS_MOM		/* Server Only */

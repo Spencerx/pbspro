@@ -127,6 +127,8 @@
 #include	"pbs_reliable.h"
 #include	<arpa/inet.h>
 
+#include	"renew.h"
+
 #define STATE_UPDATE_TIME 10
 #ifndef	PRIO_MAX
 #define		PRIO_MAX	20
@@ -271,6 +273,11 @@ extern time_t		time_now;
 time_t		time_resc_updated = 0;
 extern pbs_list_head svr_requests;
 extern struct var_table vtable;	/* see start_exec.c */
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+extern pbs_list_head svr_allcreds;
+#endif
+
 #if	MOM_ALPS
 #define	ALPS_REL_WAIT_TIME_DFLT		400000;	/* 0.4 sec */
 #define	ALPS_REL_JITTER_DFLT		120000;	/* 0.12 sec */
@@ -6235,6 +6242,9 @@ do_rpp(int stream)
 	int			ret, proto, version;
 	void	im_request	(int stream, int version);
 	void	is_request	(int stream, int version);
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+	void	hs_request	(int stream, int version);
+#endif
 	void	im_eof		(int stream, int ret);
 
 	DIS_rpp_reset();
@@ -6267,6 +6277,13 @@ do_rpp(int stream)
 			DBPRT(("%s: got an inter-server request\n", __func__))
 			is_request(stream, version);
 			break;
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		case	HS_PROTOCOL:
+			DBPRT(("%s: got a handshake request\n", __func__))
+			hs_request(stream, version);
+			break;
+#endif
 
 		default:
 			DBPRT(("%s: unknown request %d\n", __func__, proto))
@@ -6494,6 +6511,21 @@ kill_job(job *pjob, int sig)
 		tsk_ct = kill_task(ptask, sig, 0);
 		ct += tsk_ct;
 
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		// only stop afslog when the task is finally dying
+		if (sig == SIGKILL) {
+#if defined(HAVE_LIBKAFS) || defined(HAVE_LIBKOPENAFS)
+			if (signal_afslog(ptask, SIGTERM)) {
+				log_record(PBSEVENT_ERROR, PBS_EVENTCLASS_JOB, LOG_ERR,
+					ptask->ti_job->ji_qs.ji_jobid, "sending signal to afslog process failed");
+			}
+#endif
+#if defined(KRB525_FALLBACK)
+			stop_renewal(ptask);
+#endif
+		}
+#endif
+
 		/*
 		 ** If this is an orphan task, force it to be EXITED
 		 ** since it will not be seen by scan_for_terminated.
@@ -6515,8 +6547,27 @@ kill_job(job *pjob, int sig)
 			 */
 			if (ptask->ti_qs.ti_parenttask == TM_NULL_TASK)
 				exiting_tasks = 1;
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+#if defined(HAVE_LIBKAFS) || defined(HAVE_LIBKOPENAFS)
+			if (signal_afslog(ptask, SIGTERM)) {
+				log_record(PBSEVENT_ERROR, PBS_EVENTCLASS_JOB, LOG_ERR,
+					ptask->ti_job->ji_qs.ji_jobid, "sending signal to afslog process failed");
+			}
+#endif
+#if defined(KRB525_FALLBACK)
+			stop_renewal(ptask);
+#endif
+#endif
 		}
 	}
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5) && 0
+	if (cred_by_job(pjob, CRED_DESTROY) != PBSGSS_OK) {
+		log_record(PBSEVENT_ERROR, PBS_EVENTCLASS_JOB, LOG_DEBUG, pjob->ji_qs.ji_jobid,
+			"failed to destroy credentials");
+	}
+#endif
 	DBPRT(("%s: done %s killed %d\n", __func__, pjob->ji_qs.ji_jobid, ct))
 	return ct;
 #endif	/* WIN32 */
@@ -9200,6 +9251,10 @@ main(int argc, char *argv[])
 	CLEAR_HEAD(task_list_timed);
 	CLEAR_HEAD(task_list_event);
 
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+	CLEAR_HEAD(svr_allcreds);
+#endif
+
 #ifdef	WIN32
 	CLEAR_HEAD(mom_copyreqs_list);
 
@@ -9321,7 +9376,7 @@ main(int argc, char *argv[])
 	    /* set tcp function pointers */
 		set_tpp_funcs(log_tppmsg);
 
-		if (pbs_conf.auth_method == AUTH_RESV_PORT) {
+		if (pbs_conf.auth_method == AUTH_RESV_PORT || pbs_conf.auth_method == AUTH_GSS) {
 				rc = set_tpp_config(&pbs_conf, &tpp_conf, nodename, pbs_rm_port, pbs_conf.pbs_leaf_routers,
 														pbs_conf.pbs_use_compression, TPP_AUTH_RESV_PORT, NULL, NULL);
 		} else {

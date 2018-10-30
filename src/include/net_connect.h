@@ -65,6 +65,7 @@ typedef unsigned long pbs_net_t;        /* for holding host addresses */
 #define PBS_NET_CONN_NOTIMEOUT	   0x04
 #define PBS_NET_CONN_FROM_QSUB_DAEMON	0x08
 #define PBS_NET_CONN_FORCE_QSUB_UPDATE	0x10
+#define PBS_NET_CONN_GSSAPIAUTH 0x20
 
 #define	QSUB_DAEMON	"qsub-daemon"
 
@@ -86,6 +87,8 @@ typedef unsigned long pbs_net_t;        /* for holding host addresses */
 #define	IS_PROTOCOL	4	/* inter-server protocol number */
 #define	IS_PROTOCOL_VER	3	/* inter-server protocol version number */
 
+#define HS_PROTOCOL	5	/* handshake protocol number */
+#define HS_PROTOCOL_VER	1	/* handshake version number */
 
 /*
  **	Types of Inter Server messages (between Server and Mom).
@@ -141,6 +144,9 @@ typedef unsigned long pbs_net_t;        /* for holding host addresses */
 #define B_RESERVED	0x1	/* need reserved port */
 #define B_SVR		0x2	/* generate server type auth message */
 #define B_EXTERNAL	0x4 /* External authentication framework like munge to be used */
+
+/* Handshake protocols GSS, TLS, ... */
+#define GSS_HANDSHAKE	1	/* gss handshake */
 
 /**
  * @brief
@@ -221,5 +227,10 @@ struct connection {
 	char            cn_username[PBS_MAXUSER];
 	char            cn_hostname[PBS_MAXHOSTNAME+1];
 	pbs_list_link   cn_link;  /* link to the next connection in the linked list */
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+        char            *cn_principal;
+        char            cn_physhost[PBS_MAXHOSTNAME+1];
+#endif
 };
 #endif	/* _NET_CONNECT_H */

@@ -102,6 +102,14 @@ extern int set_tpp_config(struct pbs_config *pbs_conf,
 	int port, char *routers, int compress, int auth_type,
 	void* (*cb_get_ext_auth_data)(int auth_type, int *data_len, char *ebuf, int ebufsz),
 	int (*cb_validate_ext_auth_data) (int auth_type, void *data, int data_len, char *ebuf, int ebufsz));
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+#include <gssapi.h>
+extern int DIS_tpp_has_ctx(int fd);
+extern gss_ctx_id_t DIS_tpp_get_ctx(int fd);
+extern int DIS_tpp_set_gss(int fd, gss_ctx_id_t ctx, OM_uint32 flags, int ctx_established);
+#endif
+
 /*
  **	Common Function prototypes (rpp or tpp)
  */

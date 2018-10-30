@@ -40,7 +40,7 @@ noinst_LIBRARIES = libutil.a
 
 libutil_a_CPPFLAGS = \
 	-I$(top_srcdir)/src/include \
-	@libical_inc@
+	@libical_inc@ @KRB5_CFLAGS@
 
 libutil_a_SOURCES = \
 	execvnode_seq_util.c \

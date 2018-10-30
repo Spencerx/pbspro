@@ -534,6 +534,8 @@ dis_request_read(int sfds, struct batch_request *request)
 	switch (request->rq_type) {
 		case PBS_BATCH_Connect:
 			break;
+                case PBS_BATCH_GSSAuthenUser:
+                        break;
 
 		case PBS_BATCH_Disconnect:
 			return (-1);		/* set EOF return */
@@ -707,6 +709,9 @@ dis_request_read(int sfds, struct batch_request *request)
 		case PBS_BATCH_CopyFiles_Cred:
 		case PBS_BATCH_DelFiles_Cred:
 			rc = decode_DIS_CopyFiles_Cred(sfds, request);
+			break;
+		case PBS_BATCH_Cred:
+			rc = decode_DIS_Cred(sfds, request);
 			break;
 
 #endif	/* PBS_MOM */

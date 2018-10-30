@@ -758,6 +758,26 @@ is_request(int stream, int version)
 	if (ret != DIS_SUCCESS)
 		goto err;
 
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+	/* check which command can be sent in cleartext */
+	switch (command) {
+		case IS_NULL:
+		case IS_HELLO:
+		case IS_HELLO2:
+		case IS_HELLO3:
+		case IS_HELLO4:
+			break;
+
+		default:
+			if (!DIS_tpp_has_ctx(stream)) {
+				sprintf(log_buffer, "command %d sent in cleartext", command);
+				log_err(-1, __func__, log_buffer);
+				goto err;
+			}
+			break;
+	}
+#endif
+
 	switch (command) {
 
 		case IS_NULL:		/* a ping from the server */

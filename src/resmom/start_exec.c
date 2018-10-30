@@ -97,6 +97,8 @@
 #include "pbs_internal.h"
 #include "pbs_reliable.h"
 
+#include "renew.h"
+
 #define	PIPE_READ_TIMEOUT	5
 #define EXTRA_ENV_PTRS	       32
 
@@ -145,6 +147,10 @@ extern struct rlimit   orig_core_limit;
 
 extern eventent * event_dup(eventent *ep, job *pjob, hnodent *pnode);
 extern void send_join_job_restart_mcast(int mtfd, int com, eventent *ep, int nth, job *pjob, pbs_list_head *phead);
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+extern void gss_establish_context(int stream, char *target_host, char* data, int len, int is_server);
+#endif
 
 /* Local Varibles */
 
@@ -1147,6 +1153,13 @@ becomeuser_args(char *eusrname, uid_t euid, gid_t egid, gid_t rgid)
 	gid_t *grplist = NULL;
 	static int   maxgroups=0;
 
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+#if defined(HAVE_LIBKAFS) || defined(HAVE_LIBKOPENAFS)
+	int32_t pag = 0;
+	pag = getpag();
+#endif
+#endif
+
 	/* obtain the maximum number of groups possible in the list */
 	if (maxgroups == 0)
 		maxgroups = (int)sysconf(_SC_NGROUPS_MAX);
@@ -1174,6 +1187,14 @@ becomeuser_args(char *eusrname, uid_t euid, gid_t egid, gid_t rgid)
 			}
 			grplist[numsup++] = rgid;
 		}
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+#if defined(HAVE_LIBKAFS) || defined(HAVE_LIBKOPENAFS)
+		if (pag)
+		    grplist[numsup++] = pag;
+#endif
+#endif
+
 		if ((setgroups((size_t)numsup, grplist) != -1) &&
 		    (setgid(egid) != -1) &&
 		    (setuid(euid) != -1)) {
@@ -3246,6 +3267,10 @@ finish_exec(job *pjob)
 		(void)close(parent2child_job_update_status_pipe_r);
 		(void)close(parent2child_moms_status_pipe_r);
 
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		DIS_tcp_setup(jsmpipe[0]);
+#endif
+
 		/* add the pipe to the connection table so we can poll it */
 
 		if ((conn = add_conn(jsmpipe[0], ChildPipe, (pbs_net_t)0,
@@ -3431,6 +3456,21 @@ finish_exec(job *pjob)
 			ATR_VFLAG_SET | ATR_VFLAG_MODIFY;
 #endif	/* SHELL_INVOKE */
 
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		if (pjob->ji_wattr[(int)JOB_ATR_krb_princ].at_flags & ATR_VFLAG_SET) {
+			send_cred_sisters(pjob);
+#if defined(KRB525_FALLBACK)
+			/* set krb525_fallback renew task */
+			if (!set_task(WORK_Timed, time_now + KRB525_FALLBACK_TIME,
+				krb525_fallback_renewal,
+				(void *)strdup(ptask->ti_job->ji_qs.ji_jobid))) {
+				log_record(PBSEVENT_ERROR, PBS_EVENTCLASS_JOB, LOG_ERR,
+					pjob->ji_qs.ji_jobid, "unable to set krb525_fallback task");
+			}
+#endif
+		}
+#endif
+
 		return;
 
 	} else if (cpid < 0) {
@@ -3542,6 +3582,25 @@ finish_exec(job *pjob)
 		log_err(ENOMEM, __func__, "out of memory");
 		starter_return(upfds, downfds, JOB_EXEC_FAIL1, &sjr);
 	}
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+#if defined(KRB525_FALLBACK)
+	//if (start_renewal(ptask,pipe_script[0],pipe_script[1]) != PBSGSS_OK)
+	//	starter_return(upfds, downfds, JOB_EXEC_FAIL_KRB5, &sjr);
+#endif
+
+	if (cred_by_job(ptask->ti_job, CRED_RENEWAL) != PBSGSS_OK) {
+		starter_return(upfds, downfds, JOB_EXEC_FAIL_KRB5, &sjr);
+	}
+#if defined(HAVE_LIBKAFS) || defined(HAVE_LIBKOPENAFS)
+	if (start_afslog(ptask, NULL, pipe_script[0], pipe_script[1]) != PBSGSS_OK) {
+		sprintf(log_buffer, "afslog for task %8.8X not started",
+			ptask->ti_qs.ti_task);
+		log_event(PBSEVENT_JOB, PBS_EVENTCLASS_JOB, LOG_INFO,
+			pjob->ji_qs.ji_jobid, log_buffer);
+	}
+#endif
+#endif
 
 	/*  First variables from the local environment */
 
@@ -4828,6 +4887,27 @@ start_process(task *ptask, char **argv, char **envp, bool nodemux)
 	if (vtable.v_envp == NULL) {
 		return PBSE_SYSTEM;
 	}
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+#if defined(KRB525_FALLBACK)
+	//if (start_renewal(ptask,kid_write,kid_read) != PBSGSS_OK)
+	//	starter_return(kid_write, kid_read, JOB_EXEC_FAIL_KRB5, &sjr);
+#endif
+	if (cred_by_job(ptask->ti_job, CRED_RENEWAL) != PBSGSS_OK) {
+		sprintf(log_buffer, "failed to set credentials for task %8.8X",
+			ptask->ti_qs.ti_task);
+		log_event(PBSEVENT_JOB, PBS_EVENTCLASS_JOB, LOG_ERR,
+			pjob->ji_qs.ji_jobid, log_buffer);
+	}
+#if defined(HAVE_LIBKAFS) || defined(HAVE_LIBKOPENAFS)
+	if (start_afslog(ptask, NULL, kid_write, kid_read) != PBSGSS_OK) {
+		sprintf(log_buffer, "afslog for task %8.8X not started",
+			ptask->ti_qs.ti_task);
+		log_event(PBSEVENT_JOB, PBS_EVENTCLASS_JOB, LOG_INFO,
+			pjob->ji_qs.ji_jobid, log_buffer);
+	}
+#endif
+#endif
 
 	/* First variables from the local environment */
 	for (j = 0; j < num_var_env; ++j)
@@ -6133,6 +6213,9 @@ start_exec(job *pjob)
 				exec_bail(pjob, JOB_EXEC_FAIL1, NULL);
 				return;
 			}
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+			gss_establish_context(np->hn_stream, np->hn_host, NULL, 0, 0);
+#endif
 			if (pbs_conf.pbs_use_mcast == 1) {
 				/* add each of the rpp streams to the tpp mcast channel */
 				if ((tpp_mcast_add_strm(mtfd, np->hn_stream)) == -1) {
@@ -6908,7 +6991,11 @@ catchinter(int sig)
 		return;
 	if (pid == writerpid) {
 		kill(shellpid, SIGKILL);
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		waitpid(shellpid, &status, WNOHANG);
+#else
 		(void)wait(&status);
+#endif
 		mom_reader_go = 0;
 		x11_reader_go = 0;
 	}

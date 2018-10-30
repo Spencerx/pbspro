@@ -306,6 +306,7 @@ pbs_list_head	svr_execjob_abort_hooks;
 pbs_list_head	svr_execjob_postsuspend_hooks;
 pbs_list_head	svr_execjob_preresume_hooks;
 pbs_list_head	svr_allscheds;
+pbs_list_head	svr_creds_cache; /* all credentials available to send */
 time_t		time_now;
 struct batch_request	*saved_takeover_req=NULL;
 struct python_interpreter_data  svr_interp_data;
@@ -442,6 +443,9 @@ do_rpp(int stream)
 {
 	int			ret, proto, version;
 	void			is_request(int, int);
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+	void			hs_request(int, int);
+#endif
 	void			stream_eof(int, int, char *);
 
 	DIS_rpp_reset();
@@ -463,6 +467,13 @@ do_rpp(int stream)
 			DBPRT(("%s: got an inter-server request\n", __func__))
 			is_request(stream, version);
 			break;
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		case	HS_PROTOCOL:
+			DBPRT(("%s: got a handshake request\n", __func__))
+			hs_request(stream, version);
+			break;
+#endif
 
 		default:
 			DBPRT(("%s: unknown request %d\n", __func__, proto))
@@ -1294,6 +1305,7 @@ main(int argc, char **argv)
 	CLEAR_HEAD(svr_execjob_postsuspend_hooks);
 	CLEAR_HEAD(svr_execjob_preresume_hooks);
 	CLEAR_HEAD(svr_allscheds);
+	CLEAR_HEAD(svr_creds_cache);
 
 	/* initialize paths that we will need */
 	path_priv       = build_path(pbs_conf.pbs_home_path, PBS_SVR_PRIVATE,
@@ -1821,7 +1833,7 @@ try_db_again:
 		/* set tpp function pointers */
 		set_tpp_funcs(log_tppmsg);
 
-		if (pbs_conf.auth_method == AUTH_RESV_PORT) {
+		if (pbs_conf.auth_method == AUTH_RESV_PORT || pbs_conf.auth_method == AUTH_GSS) {
 			rc = set_tpp_config(&pbs_conf, &tpp_conf, nodename, pbs_server_port_dis, pbs_conf.pbs_leaf_routers,
 								pbs_conf.pbs_use_compression, TPP_AUTH_RESV_PORT, NULL, NULL);
 		} else {

@@ -38,7 +38,7 @@
 
 lib_LTLIBRARIES = libpbs.la
 
-libpbs_la_CPPFLAGS = -I$(top_srcdir)/src/include
+libpbs_la_CPPFLAGS = -I$(top_srcdir)/src/include @KRB5_CFLAGS@
 
 #
 # There are specific rules that must be followed when updating the library
@@ -48,7 +48,7 @@ libpbs_la_CPPFLAGS = -I$(top_srcdir)/src/include
 #
 pkgconfig_DATA = pbs.pc
 
-libpbs_la_LDFLAGS = -version-info 0:0:0
+libpbs_la_LDFLAGS = -version-info 0:0:0 @KRB5_LIBS@
 
 libpbs_la_LIBADD= \
 	-lcrypto \
@@ -212,6 +212,9 @@ libpbs_la_SOURCES = \
 	../Libifl/int_submit_resv.c \
 	../Libifl/int_status.c \
 	../Libifl/int_ucred.c \
+	../Libifl/int_cred.c \
+	../Libifl/enc_Cred.c \
+	../Libifl/dec_Cred.c \
 	../Libifl/int_modify_resv.c \
 	../Libifl/int_preempt_jobs.c \
 	../Libifl/list_link.c \
@@ -260,6 +263,7 @@ libpbs_la_SOURCES = \
 	../Libifl/pbsD_Preempt_Jobs.c \
 	../Libifl/ifl_impl.c \
 	../Libifl/ifl_pointers.c \
+	../Libifl/pbsgss.c \
 	../Libifl/rpp.c \
 	../Libifl/strsep.c \
 	../Libifl/tcp_dis.c \

@@ -38,7 +38,7 @@
 
 noinst_LIBRARIES = libtpp.a
 
-libtpp_a_CPPFLAGS = -I$(top_srcdir)/src/include
+libtpp_a_CPPFLAGS = -I$(top_srcdir)/src/include @KRB5_CFLAGS@
 
 libtpp_a_SOURCES = \
 	tpp_client.c \

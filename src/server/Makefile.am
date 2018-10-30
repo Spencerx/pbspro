@@ -44,7 +44,8 @@ pbs_server_bin_CPPFLAGS = \
 	@expat_inc@ \
 	@libical_inc@ \
 	@libz_inc@ \
-	@PYTHON_INCLUDES@
+	@PYTHON_INCLUDES@ \
+	@KRB5_CFLAGS@
 
 pbs_server_bin_LDADD = \
 	$(top_builddir)/src/lib/Libattr/libattr.a \
@@ -66,7 +67,8 @@ pbs_server_bin_LDADD = \
 	@PYTHON_LDFLAGS@ \
 	@PYTHON_LIBS@ \
 	-lssl \
-	-lcrypto
+	-lcrypto \
+	@KRB5_LIBS@
 
 pbs_server_bin_SOURCES = \
 	accounting.c \
@@ -97,6 +99,7 @@ pbs_server_bin_SOURCES = \
 	reply_send.c \
 	req_delete.c \
 	req_getcred.c \
+	req_gssauthenuser.c \
 	req_holdjob.c \
 	req_jobobit.c \
 	req_locate.c \
@@ -115,6 +118,10 @@ pbs_server_bin_SOURCES = \
 	req_signal.c \
 	req_stat.c \
 	req_track.c \
+	req_cred.c \
+	krb5_util.c \
+	handshake.c \
+	gss_handshake.c \
 	resc_attr.c \
 	resv_attr.c \
 	run_sched.c \
@@ -132,13 +139,15 @@ pbs_server_bin_SOURCES = \
 	svr_recov.c \
 	svr_recov_db.c \
 	svr_resccost.c \
+	svr_credfunc.c \
 	user_func.c \
 	vnparse.c
 
 pbs_comm_CPPFLAGS = \
 	-I$(top_srcdir)/src/include \
 	-I$(top_srcdir)/src/lib/Libtpp \
-	@libz_inc@
+	@libz_inc@ \
+	@KRB5_CFLAGS@
 
 pbs_comm_LDADD = \
 	$(top_builddir)/src/lib/Libtpp/libtpp.a \
@@ -147,7 +156,8 @@ pbs_comm_LDADD = \
 	$(top_builddir)/src/lib/Libpbs/.libs/libpbs.a \
 	-lpthread \
 	@libz_lib@ \
-	@socket_lib@
+	@socket_lib@ \
+	@KRB5_LIBS@
 
 pbs_comm_SOURCES = pbs_comm.c
 

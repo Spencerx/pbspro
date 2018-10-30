@@ -81,6 +81,12 @@
 #include "mom_hook_func.h"
 #include "placementsets.h"
 #include "hook.h"
+#include "renew.h"
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+extern void gss_establish_context(int stream, char *target_host, char* data, int len, int is_server);
+#endif
+
 /**
  * @file	catch_child.c
  */
@@ -1604,6 +1610,19 @@ end_loop:
 				free(pobit);
 			}
 			ptask->ti_qs.ti_status = TI_STATE_DEAD;
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+#if defined(HAVE_LIBKAFS) || defined(HAVE_LIBKOPENAFS)
+			if (signal_afslog(ptask, SIGTERM)) {
+				log_record(PBSEVENT_ERROR, PBS_EVENTCLASS_JOB, LOG_ERR,
+					ptask->ti_job->ji_qs.ji_jobid, "sending signal to afslog process failed");
+			}
+#endif
+#if defined(KRB525_FALLBACK)
+			stop_renewal(ptask);
+#endif
+#endif
+
 			/*
 			 ** KLUDGE
 			 ** We need to save the value of the sid here just
@@ -1628,6 +1647,14 @@ end_loop:
 		 */
 		if (pjob->ji_qs.ji_substate != JOB_SUBSTATE_EXITING)
 			continue;
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+		/* job in state JOB_SUBSTATE_EXITING destroy creds */
+		if (cred_by_job(pjob, CRED_DESTROY) != PBSGSS_OK) {
+			log_record(PBSEVENT_ERROR, PBS_EVENTCLASS_JOB, LOG_DEBUG, pjob->ji_qs.ji_jobid,
+				"failed to destroy credentials");
+		}
+#endif
 
 		/*
 		 ** This job is exiting.  If MOM_CHKPT_ACTIVE is on, it
@@ -1933,6 +1960,10 @@ send_restart_rpp(char *svr, unsigned int port)
 		log_err(errno, msg_daemonname, log_buffer);
 		return;
 	}
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+	gss_establish_context(j, svr, NULL, 0, 0);
+#endif
 
 	if (is_compose(j, IS_RESTART) != DIS_SUCCESS) {
 		(void)sprintf(log_buffer, "Failed to compose restart message");
@@ -2269,6 +2300,22 @@ init_abort_jobs(int recover)
 				recover_walltime(pj);
 				start_walltime(pj);
 			}
+
+#if defined(PBS_SECURITY) && (PBS_SECURITY == KRB5)
+#if defined(KRB525_FALLBACK)
+			if (pj->ji_qs.ji_substate == JOB_SUBSTATE_RUNNING &&
+				pj->ji_wattr[(int)JOB_ATR_krb_princ].at_flags & ATR_VFLAG_SET) {
+				/* set krb525_fallback renew task
+				 * immediately create a ticket if not found */
+				if (!set_task(WORK_Immed, 0,
+					krb525_fallback_renewal,
+					(void *)strdup(pj->ji_qs.ji_jobid))) {
+					log_record(PBSEVENT_ERROR, PBS_EVENTCLASS_JOB, LOG_ERR,
+						pj->ji_qs.ji_jobid, "unable to set krb525_fallback task");
+				}
+			}
+#endif
+#endif
 
 			if (mom_do_poll(pj))
 				append_link(&mom_polljobs, &pj->ji_jobque, pj);
