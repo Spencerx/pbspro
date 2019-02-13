@@ -114,6 +114,9 @@ BuildRequires: tcl-devel
 BuildRequires: tk-devel
 BuildRequires: swig
 BuildRequires: zlib-devel
+BuildRequires: heimdal-devel
+BuildRequires: heimdal-libs
+BuildRequires: krb525
 %if %{defined suse_version}
 BuildRequires: libexpat-devel
 BuildRequires: libopenssl-devel
@@ -275,9 +278,11 @@ functionality of PBS Professional®.
 [ -d build ] && rm -rf build
 mkdir build
 cd build
+CFLAGS="-std=gnu99 -g -ggdb -D_GNU_SOURCE -D__STDC_FORMAT_MACROS -D__TOLDGROUP -D__STDC_FORMAT_MACROS" \
 ../configure \
 	PBS_VERSION=%{pbs_version} \
 	--prefix=%{pbs_prefix} \
+	--with-krbauth PATH_KRB5_CONFIG=/usr/lib/heimdal/bin/krb5-config \
 %if %{with ptl}
 	--enable-ptl \
 %endif
@@ -315,9 +320,16 @@ if [ $imps -eq 0 ]; then
 ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_postinstall server \
 	%{version} ${RPM_INSTALL_PREFIX:=%{pbs_prefix}} %{pbs_home} %{pbs_dbuser}
 fi
+if [ "$1" == "2" ]; then
+	service pbs restart
+fi
 
 %post %{pbs_execution}
 ldconfig %{_libdir}
+sed -i '/GuessMainPID=no/d' %{_unitdir}/pbs.service
+sed -i '/\[Service\]/a PIDFile=\/var\/spool\/pbs\/mom_priv\/mom.lock'  %{_unitdir}/pbs.service
+sed -i '/\[Service\]/a KillMode=process' %{_unitdir}/pbs.service
+sed -i 's/Restart=.*/Restart=always/g' %{_unitdir}/pbs.service
 # do not run pbs_postinstall when the CLE is greater than or equal to 6
 imps=0
 cle_release_version=0
@@ -329,6 +341,9 @@ fi
 if [ $imps -eq 0 ]; then
 ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_postinstall execution \
 	%{version} ${RPM_INSTALL_PREFIX:=%{pbs_prefix}} %{pbs_home}
+fi
+if [ "$1" == "2" ]; then
+	kill -USR1 $(cat /var/spool/pbs/mom_priv/mom.lock)
 fi
 
 %post %{pbs_client}
@@ -418,6 +433,7 @@ ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_posttrans \
 %{_sysconfdir}/profile.d/pbs.csh
 %{_sysconfdir}/profile.d/pbs.sh
 %config(noreplace) %{_sysconfdir}/profile.d/*
+%config %{pbs_prefix}/lib/init.d/limits.pbs_mom
 %if %{defined have_systemd}
 %attr(644, root, root) %{_unitdir}/pbs.service
 %else
@@ -440,6 +456,7 @@ ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_posttrans \
 %{_sysconfdir}/profile.d/pbs.csh
 %{_sysconfdir}/profile.d/pbs.sh
 %config(noreplace) %{_sysconfdir}/profile.d/*
+%config %{pbs_prefix}/lib/init.d/limits.pbs_mom
 %if %{defined have_systemd}
 %attr(644, root, root) %{_unitdir}/pbs.service
 %else
