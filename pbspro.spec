@@ -115,6 +115,8 @@ BuildRequires: tcl-devel
 BuildRequires: tk-devel
 BuildRequires: swig
 BuildRequires: zlib-devel
+BuildRequires: heimdal-devel
+BuildRequires: heimdal-libs
 %if %{with pmix}
 BuildRequires: pmix
 %endif
@@ -297,9 +299,11 @@ functionality of PBS Professional®.
 [ -d build ] && rm -rf build
 mkdir build
 cd build
+CFLAGS="-g -ggdb" \
 ../configure \
 	PBS_VERSION=%{pbs_version} \
 	--prefix=%{pbs_prefix} \
+	--with-krbauth PATH_KRB5_CONFIG=/usr/lib/heimdal/bin/krb5-config \
 %if %{with ptl}
 	--enable-ptl \
 %endif
@@ -337,8 +341,18 @@ if [ $imps -eq 0 ]; then
 ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_postinstall server \
 	%{version} ${RPM_INSTALL_PREFIX:=%{pbs_prefix}} %{pbs_home} %{pbs_dbuser}
 fi
+if [ "$1" == "2" ]; then
+	systemctl restart pbs
+fi
 
 %post %{pbs_execution}
+sed -i '/GuessMainPID=no/d' %{_unitdir}/pbs.service
+sed -i '/\[Service\]/a PIDFile=\/var\/spool\/pbs\/mom_priv\/mom.lock'  %{_unitdir}/pbs.service
+sed -i '/\[Service\]/a KillMode=process' %{_unitdir}/pbs.service
+sed -i '/\[Service\]/a StartLimitIntervalSec=0' %{_unitdir}/pbs.service
+sed -i '/\[Service\]/a StartLimitBurst=25' %{_unitdir}/pbs.service
+sed -i '/\[Service\]/a RestartSec=5' %{_unitdir}/pbs.service
+sed -i 's/Restart=.*/Restart=always/g' %{_unitdir}/pbs.service
 ldconfig %{_libdir}
 # do not run pbs_postinstall when the CLE is greater than or equal to 6
 imps=0
@@ -351,6 +365,9 @@ fi
 if [ $imps -eq 0 ]; then
 ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_postinstall execution \
 	%{version} ${RPM_INSTALL_PREFIX:=%{pbs_prefix}} %{pbs_home}
+fi
+if [ "$1" == "2" ]; then
+	kill -USR1 $(cat /var/spool/pbs/mom_priv/mom.lock)
 fi
 
 %post %{pbs_client}
@@ -442,6 +459,7 @@ ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_posttrans \
 %config(noreplace) %{_sysconfdir}/profile.d/pbs.*
 %exclude %{_sysconfdir}/profile.d/ptl.csh
 %exclude %{_sysconfdir}/profile.d/ptl.sh
+%config %{pbs_prefix}/lib/init.d/limits.pbs_mom
 %if %{defined have_systemd}
 %attr(644, root, root) %{_unitdir}/pbs.service
 %else
@@ -467,6 +485,7 @@ ${RPM_INSTALL_PREFIX:=%{pbs_prefix}}/libexec/pbs_posttrans \
 %config(noreplace) %{_sysconfdir}/profile.d/pbs.*
 %exclude %{_sysconfdir}/profile.d/ptl.csh
 %exclude %{_sysconfdir}/profile.d/ptl.sh
+%config %{pbs_prefix}/lib/init.d/limits.pbs_mom
 %if %{defined have_systemd}
 %attr(644, root, root) %{_unitdir}/pbs.service
 %else
